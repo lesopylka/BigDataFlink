@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:16.6
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports: ["127.0.0.1:5434:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/01_start.sql:/docker-entrypoint-initdb.d/01_start.sql:ro
+      - ./sql/02_ddl.sql:/docker-entrypoint-initdb.d/02_ddl.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 30
+  kafka:
+    image: confluentinc/cp-kafka:7.7.1
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes: ["kafka_data:/var/lib/kafka/data"]
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list"]
+      interval: 10s
+      retries: 30
+  topic:
+    image: confluentinc/cp-kafka:7.7.1
+    command: kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic sales --partitions 1 --replication-factor 1
+    depends_on:
+      kafka: {condition: service_healthy}
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    command: python Scripts/produce.py
+    profiles: ["send"]
+    depends_on:
+      topic: {condition: service_completed_successfully}
+  jobmanager:
+    build: .
+    command: standalone-job --job-classname mai.SalesJob
+    ports: ["127.0.0.1:8081:8081"]
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        parallelism.default: 1
+    volumes: ["checkpoints:/checkpoints"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      topic: {condition: service_completed_successfully}
+  taskmanager:
+    build: .
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 2
+    volumes: ["checkpoints:/checkpoints"]
+    depends_on: [jobmanager]
+volumes:
+  postgres_data:
+  kafka_data:
+  checkpoints:
