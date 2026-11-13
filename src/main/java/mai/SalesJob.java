@@ -14,11 +14,11 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.Properties;
 
 public class SalesJob {
     private static final String[][] GROUPS = {
@@ -48,6 +48,7 @@ public class SalesJob {
     }
 
     public static class SalesSink extends RichSinkFunction<String> {
+        private static final long serialVersionUID = 1L;
         private transient Connection conn;
         private transient ObjectMapper mapper;
         private transient PreparedStatement[] dimensions;
@@ -56,7 +57,11 @@ public class SalesJob {
 
         @Override
         public void open(Configuration parameters) throws Exception {
-            conn = DriverManager.getConnection("jdbc:postgresql://postgres:5432/postgres", "postgres", "postgres");
+            Properties properties = new Properties();
+            properties.setProperty("user", "postgres");
+            properties.setProperty("password", "postgres");
+            // Драйвер загружается из JAR job и не зависит от глобального реестра после рестарта.
+            conn = new org.postgresql.Driver().connect("jdbc:postgresql://postgres:5432/postgres", properties);
             conn.setAutoCommit(false);
             mapper = new ObjectMapper();
             dimensions = new PreparedStatement[NAMES.length];
